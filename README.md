@@ -1,5 +1,7 @@
 # Kafka Connect Join Field Transformer
 
+[![Java CI with Gradle](https://github.com/joker1007/kafka-connect-join-field-transformer/actions/workflows/build.yml/badge.svg)](https://github.com/joker1007/kafka-connect-join-field-transformer/actions/workflows/build.yml)
+
 This is an implementation of a kafka-connect transformer to join multiple fields as a string.
 
 # Configuration
