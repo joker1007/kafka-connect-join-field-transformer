@@ -39,6 +39,25 @@ class JoinFieldTest {
   }
 
   @Test
+  void testApplySchemalessWithFormat() {
+    JoinField<SinkRecord> transformer = new JoinField.Value<>();
+
+    Map<String, Object> value = new HashMap<>();
+    value.put("key1", 1);
+    value.put("key2", "str");
+
+    var record = new SinkRecord("test-topic", 1, null, "key", null, value, 1);
+    var config = buildConfig();
+    config.put("format", "%010d_%s");
+
+    transformer.configure(config);
+
+    var result = transformer.apply(record).value();
+
+    assertEquals(Map.of("key1", 1, "key2", "str", "joined", "0000000001_str"), result);
+  }
+
+  @Test
   void testApplyWithSchema() {
     JoinField<SinkRecord> transformer = new JoinField.Value<>();
 
@@ -62,5 +81,32 @@ class JoinFieldTest {
     assertEquals(1, result.get("key1"));
     assertEquals("str", result.get("key2"));
     assertEquals("1_str", result.get("joined"));
+  }
+
+  @Test
+  void testApplyWithSchemaWithFormat() {
+    JoinField<SinkRecord> transformer = new JoinField.Value<>();
+
+    var schema =
+        SchemaBuilder.struct()
+            .field("key1", Schema.INT32_SCHEMA)
+            .field("key2", Schema.STRING_SCHEMA)
+            .build();
+
+    Struct value = new Struct(schema);
+    value.put("key1", 1);
+    value.put("key2", "str");
+
+    var record = new SinkRecord("test-topic", 1, null, "key", schema, value, 1);
+    var config = buildConfig();
+    config.put("format", "%010d_%s");
+
+    transformer.configure(config);
+
+    var result = (Struct) transformer.apply(record).value();
+
+    assertEquals(1, result.get("key1"));
+    assertEquals("str", result.get("key2"));
+    assertEquals("0000000001_str", result.get("joined"));
   }
 }

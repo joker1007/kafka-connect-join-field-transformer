@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.apache.kafka.common.cache.LRUCache;
 import org.apache.kafka.common.cache.SynchronizedCache;
 import org.apache.kafka.common.config.ConfigDef;
@@ -28,14 +29,15 @@ public abstract class JoinField<R extends ConnectRecord<R>> implements Transform
   private static final String FIELDS_CONFIG = "fields";
   private static final String JOINED_NAME_CONFIG = "joined.name";
   private static final String SEPARATOR_CONFIG = "separator";
+  private static final String FORMAT_CONFIG = "format";
 
   public static final ConfigDef CONFIG_DEF =
       new ConfigDef()
           .define(
               FIELDS_CONFIG,
-              ConfigDef.Type.STRING,
+              Type.STRING,
               ConfigDef.NO_DEFAULT_VALUE,
-              ConfigDef.Importance.MEDIUM,
+              Importance.MEDIUM,
               "Fields name to join.")
           .define(
               JOINED_NAME_CONFIG,
@@ -43,15 +45,19 @@ public abstract class JoinField<R extends ConnectRecord<R>> implements Transform
               ConfigDef.NO_DEFAULT_VALUE,
               Importance.MEDIUM,
               "Output field name")
-          .define(SEPARATOR_CONFIG, Type.STRING, "_", Importance.MEDIUM, "Separator string");
+          .define(SEPARATOR_CONFIG, Type.STRING, "_", Importance.MEDIUM, "Separator string")
+          .define(FORMAT_CONFIG, Type.STRING, null, Importance.MEDIUM, "String Format");
 
   private static final String PURPOSE = "fields extraction and join them as a string";
 
   private List<String> fieldsName;
   private String joinedName;
   private String separator;
+  private String format;
 
   private SynchronizedCache<Schema, Schema> schemaUpdateCache;
+
+  protected JoinField() {}
 
   @Override
   public void configure(Map<String, ?> props) {
@@ -60,6 +66,7 @@ public abstract class JoinField<R extends ConnectRecord<R>> implements Transform
         Arrays.stream(config.getString(FIELDS_CONFIG).split(",")).collect(Collectors.toList());
     joinedName = config.getString(JOINED_NAME_CONFIG);
     separator = config.getString(SEPARATOR_CONFIG);
+    format = config.getString(FORMAT_CONFIG);
 
     schemaUpdateCache = new SynchronizedCache<>(new LRUCache<>(16));
   }
@@ -81,18 +88,37 @@ public abstract class JoinField<R extends ConnectRecord<R>> implements Transform
     final Map<String, Object> value = requireMapOrNull(operatingValue(record), PURPOSE);
     final Map<String, Object> updatedValue = new HashMap<>(value);
 
-    String joined =
-        fieldsName.stream()
-            .map(value::get)
-            .filter(Objects::nonNull)
-            .map(Object::toString)
-            .collect(Collectors.joining(separator));
+    String joined;
+    if (format == null) {
+      joined =
+          fieldsName.stream()
+              .map(value::get)
+              .filter(Objects::nonNull)
+              .map(Object::toString)
+              .collect(Collectors.joining(separator));
+    } else {
+      Object[] fieldValues = fieldsName.stream().map(value::get).filter(Objects::nonNull).toArray();
+      joined = String.format(format, fieldValues);
+    }
     if (!joined.isEmpty()) {
       updatedValue.put(joinedName, joined);
       return newRecord(record, null, updatedValue);
     } else {
       return record;
     }
+  }
+
+  private Stream<Object> getNonNullFieldValues(Struct struct, Schema schema) {
+    return fieldsName.stream()
+        .map(
+            name -> {
+              var f = schema.field(name);
+              if (f == null) {
+                throw new IllegalArgumentException("Unknown field: " + name);
+              }
+              return struct.get(f);
+            })
+        .filter(Objects::nonNull);
   }
 
   private R applyWithSchema(R record, Schema schema) {
@@ -105,19 +131,16 @@ public abstract class JoinField<R extends ConnectRecord<R>> implements Transform
 
     Struct updatedValue = new Struct(updatedSchema);
 
-    String joined =
-        fieldsName.stream()
-            .map(
-                name -> {
-                  var f = schema.field(name);
-                  if (f == null) {
-                    throw new IllegalArgumentException("Unknown field: " + name);
-                  }
-                  return value.get(f);
-                })
-            .filter(Objects::nonNull)
-            .map(Object::toString)
-            .collect(Collectors.joining(separator));
+    String joined;
+    if (format == null) {
+      joined =
+          getNonNullFieldValues(value, schema)
+              .map(Object::toString)
+              .collect(Collectors.joining(separator));
+    } else {
+      Object[] fieldValues = getNonNullFieldValues(value, schema).toArray();
+      joined = String.format(format, fieldValues);
+    }
 
     for (Field field : value.schema().fields()) {
       updatedValue.put(field.name(), value.get(field));
